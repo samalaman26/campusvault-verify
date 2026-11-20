@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CampusVault Student Verification</title>
+<style>
+:root{--bg:#f4f7fb;--card:#fff;--ink:#1f2937;--mute:#64748b;--line:#e2e8f0;--navy:#0b2545;--blue:#1d4ed8;--ok:#15803d;--warn:#d97706;--bad:#b91c1c}
+@media (prefers-color-scheme:dark){:root{--bg:#0b1220;--card:#131c2e;--ink:#e5e7eb;--mute:#94a3b8;--line:#243049}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:560px;margin:0 auto;padding:16px 16px 48px}
+.brand{display:flex;align-items:center;gap:8px;padding:8px 0 16px;color:var(--mute);font-weight:600}
+.hero{background:linear-gradient(135deg,#0b1b3f,#1d4ed8);color:#fff;border-radius:20px;padding:24px 16px;text-align:center}
+.avatar{width:104px;height:104px;border-radius:50%;object-fit:cover;background:rgba(255,255,255,.2);display:block;margin:0 auto 12px;image-rendering:auto}
+.hero h1{margin:0;font-size:22px}
+.hero .id{opacity:.8;font-size:13px;margin-top:2px}
+.badge{display:inline-block;margin-top:12px;padding:5px 14px;border-radius:999px;font-size:13px;font-weight:700;color:#fff}
+.badge.ok{background:var(--ok)}.badge.warn{background:var(--warn)}
+.sig{margin:14px 0;padding:12px 14px;border-radius:14px;font-weight:600}
+.sig.ok{background:#dcfce7;color:#14532d}.sig.bad{background:#fee2e2;color:#7f1d1d}
+section{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:6px 16px 10px;margin-top:14px}
+section h2{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--blue);margin:12px 0 4px}
+.row{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}.row .k{color:var(--mute);flex:0 0 38%}.row .v{text-align:right;overflow-wrap:anywhere;font-weight:500}
+.note{color:var(--mute);font-size:12.5px;margin-top:16px}
+textarea{width:100%;min-height:90px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:10px;font:13px monospace}
+button{margin-top:8px;padding:10px 18px;border:0;border-radius:12px;background:var(--blue);color:#fff;font-weight:700;font-size:15px}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:6px 4px;text-align:right;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}
+</style>
+</head>
+<body>
+<main>
+<div class="brand">&#128274; CampusVault &middot; Student verification</div>
+<div id="out"></div>
+<div id="manual" hidden>
+  <p>No QR data found in this link. Paste the QR text copied from the CampusVault app:</p>
+  <textarea id="paste" placeholder="CVQR1...."></textarea><br>
+  <button id="go">Verify</button>
+</div>
+<p class="note">This page checks that the QR was created by CampusVault and has not been edited. It runs fully in your browser; nothing is uploaded. The &ldquo;Verified by admin&rdquo; label is what the student's own app recorded after an admin approved the profile on that phone.</p>
+</main>
+<script>
+const KEY='campusvault-student-qr-signing-key-v1';
+const out=document.getElementById('out');
+const b64u=s=>{s=s.replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';const b=atob(s);return Uint8Array.from(b,c=>c.charCodeAt(0));};
+async function sigOk(comp,sig){
+  const k=await crypto.subtle.importKey('raw',new TextEncoder().encode(KEY),{name:'HMAC',hash:'SHA-256'},false,['sign']);
+  const mac=new Uint8Array(await crypto.subtle.sign('HMAC',k,comp)).slice(0,12);
+  if(mac.length!==sig.length)return false;let d=0;for(let i=0;i<mac.length;i++)d|=mac[i]^sig[i];return d===0;
+}
+async function gunzip(bytes){
+  const s=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return await new Response(s).text();
+}
+function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;}
+function row(sec,k,v){if(v===undefined||v===null||String(v).trim()==='')return;const r=el('div','row');r.append(el('span','k',k),el('span','v',String(v)));sec.append(r);}
+function section(title){const s=el('section');s.append(el('h2','',title));out.append(s);return s;}
+function fail(msg){out.replaceChildren();out.append(el('div','sig bad',msg));}
+async function show(raw){
+  out.replaceChildren();
+  let t=decodeURIComponent(raw.trim());
+  const h=t.lastIndexOf('#');if(h>=0)t=t.slice(h+1);
+  const p=t.split('.');
+  if(p.length!==3||p[0]!=='CVQR1')return fail('This is not a CampusVault student QR.');
+  let data;
+  try{
+    const comp=b64u(p[1]),sig=b64u(p[2]);
+    if(!await sigOk(comp,sig))return fail('This QR was altered or is damaged, so it cannot be trusted.');
+    data=JSON.parse(await gunzip(comp));
+  }catch(e){return fail('This QR could not be read. Try scanning again.');}
+  const verified=data.verified===true;
+  const hero=el('div','hero');
+  const ph=typeof data.photo==='string'&&/^[A-Za-z0-9+/=]+$/.test(data.photo)?data.photo:'';
+  if(ph){const i=el('img','avatar');i.alt='';i.src='data:image/jpeg;base64,'+ph;hero.append(i);}
+  hero.append(el('h1','',data.fullName||'Student'),el('div','id','ID: '+(data.studentId||'')),
+    el('span','badge '+(verified?'ok':'warn'),verified?'Verified by admin':'Not yet verified'));
+  out.append(hero,el('div','sig ok','✓ Genuine CampusVault QR. Not edited.'));
+  let s=section('College');
+  row(s,'College',data.collegeName);row(s,'Location',data.collegeLocation);row(s,'Branch',data.branch);row(s,'Semester',data.semester);
+  row(s,'Admission year',data.admissionYear);row(s,'Registration no.',data.registrationNumber);row(s,'Roll no.',data.rollNumber);
+  if(data.fatherName||data.dob||data.gender||data.mobile||data.email){
+    s=section('Personal');row(s,"Father's name",data.fatherName);row(s,'Date of birth',data.dob);row(s,'Gender',data.gender);row(s,'Mobile',data.mobile);row(s,'Email',data.email);}
+  s=section('Academic');row(s,'Status',data.academicStatus);
+  if(data.overallPercentage!=null)row(s,'Overall percentage',Number(data.overallPercentage).toFixed(2)+'%');
+  if(data.cgpa!=null)row(s,'CGPA',Number(data.cgpa).toFixed(2));
+  row(s,'Current backpapers',data.currentBackpapers);row(s,'Total backpapers',data.totalBackpapers);
+  (Array.isArray(data.backpapers)?data.backpapers:[]).forEach(b=>row(s,'Backpaper',(b.subject||'')+' (Sem '+(b.semester||'')+')'));
+  if(Array.isArray(data.marks)&&data.marks.some(m=>m&&m.total>0)){
+    const tb=el('table');const hd=el('tr');['Sem','Obtained','Total'].forEach(x=>hd.append(el('th','',x)));tb.append(hd);
+    data.marks.forEach(m=>{if(!m||!(m.total>0))return;const r=el('tr');[m.sem,m.obtained,m.total].forEach(x=>r.append(el('td','',x)));tb.append(r);});
+    s.append(tb);}
+  const add=['skills','certifications','projects','achievements','internship','linkedin','github','careerGoal'].some(k=>data[k]);
+  if(add){s=section('Additional');row(s,'Skills',data.skills);row(s,'Certifications',data.certifications);row(s,'Projects',data.projects);
+    row(s,'Achievements',data.achievements);row(s,'Internship',data.internship);row(s,'LinkedIn',data.linkedin);row(s,'GitHub',data.github);row(s,'Career goal',data.careerGoal);}
+  if(Array.isArray(data.cut)&&data.cut.length){out.append(el('p','note','Left out to keep the QR small: '+data.cut.join(', ')+'.'));}
+}
+const hash=location.hash.slice(1);
+if(hash){show(hash);}else{document.getElementById('manual').hidden=false;}
+document.getElementById('go').onclick=()=>show(document.getElementById('paste').value);
+</script>
+</body>
+</html>
